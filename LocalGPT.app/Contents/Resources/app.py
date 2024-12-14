@@ -5,12 +5,94 @@ import logging
 from pydantic import ConfigDict
 import psutil
 import platform
+import json
+import os
+from datetime import datetime
+import time
 
 # Configure Pydantic
 model_config = ConfigDict(arbitrary_types_allowed=True)
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Chat history configuration
+HISTORY_DIR = os.path.expanduser("~/.localgpt/chat_history")
+os.makedirs(HISTORY_DIR, exist_ok=True)
+
+class ChatHistory:
+    def __init__(self):
+        self.current_chat_id = None
+        
+    def save_chat(self, history: List[List[str]], model: str, system_prompt: str) -> str:
+        """Save current chat history to a file"""
+        if not history:
+            return "No chat to save"
+            
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        chat_id = f"chat_{timestamp}"
+        
+        chat_data = {
+            "id": chat_id,
+            "timestamp": timestamp,
+            "model": model,
+            "system_prompt": system_prompt,
+            "history": history,
+            "title": history[0][0][:50] if history else "New Chat"  # Use first message as title
+        }
+        
+        filepath = os.path.join(HISTORY_DIR, f"{chat_id}.json")
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(chat_data, f, ensure_ascii=False, indent=2)
+            
+        self.current_chat_id = chat_id
+        return f"Chat saved: {chat_data['title']}"
+        
+    def load_chat(self, chat_id: str) -> Dict:
+        """Load chat history from file"""
+        filepath = os.path.join(HISTORY_DIR, f"{chat_id}.json")
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                chat_data = json.load(f)
+            self.current_chat_id = chat_id
+            return chat_data
+        except Exception as e:
+            logging.error(f"Error loading chat {chat_id}: {e}")
+            return None
+            
+    def list_chats(self) -> List[Dict]:
+        """List all saved chats"""
+        chats = []
+        for filename in sorted(os.listdir(HISTORY_DIR), reverse=True):
+            if filename.endswith(".json"):
+                try:
+                    filepath = os.path.join(HISTORY_DIR, filename)
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        chat_data = json.load(f)
+                    chats.append({
+                        "id": chat_data["id"],
+                        "title": chat_data["title"],
+                        "timestamp": chat_data["timestamp"],
+                        "model": chat_data["model"]
+                    })
+                except Exception as e:
+                    logging.error(f"Error loading chat {filename}: {e}")
+        return chats
+        
+    def delete_chat(self, chat_id: str) -> str:
+        """Delete a saved chat"""
+        filepath = os.path.join(HISTORY_DIR, f"{chat_id}.json")
+        try:
+            os.remove(filepath)
+            if self.current_chat_id == chat_id:
+                self.current_chat_id = None
+            return f"Chat {chat_id} deleted"
+        except Exception as e:
+            logging.error(f"Error deleting chat {chat_id}: {e}")
+            return f"Error deleting chat: {str(e)}"
+
+# Initialize chat history manager
+chat_manager = ChatHistory()
 
 def get_system_info() -> Dict[str, any]:
     """Get system information for model recommendations"""
@@ -381,6 +463,27 @@ def create_gradio_interface():
                             step=0.1,
                             label="Temperature"
                         )
+                        
+                        # Chat history management
+                        gr.Markdown("### Chat History")
+                        with gr.Row():
+                            save_chat = gr.Button("💾 Save Chat")
+                            load_chat = gr.Button("📂 Load Chat")
+                            delete_chat = gr.Button("🗑️ Delete Chat")
+                        
+                        chat_list = gr.Dropdown(
+                            label="Saved Chats",
+                            choices=[],
+                            type="value",
+                            interactive=True,
+                            allow_custom_value=False
+                        )
+                        
+                        chat_info = gr.Textbox(
+                            label="Chat Info",
+                            interactive=False,
+                            lines=2
+                        )
             
             with gr.TabItem("Model Management"):
                 system_info = get_system_info()
@@ -493,6 +596,63 @@ def create_gradio_interface():
             fn=lambda: (update_models_table(), update_model_selector(), update_chat_model_selector()),
             outputs=[models_table, model_selector, chat_model_selector]
         )
+        
+        # Chat history event handlers
+        def update_chat_list():
+            chats = chat_manager.list_chats()
+            return gr.update(
+                choices=[f"{c['title']} ({c['timestamp']})" for c in chats],
+                value=None
+            )
+        
+        def save_current_chat(history, model, prompt):
+            if not history:
+                return "No chat to save", update_chat_list()
+            result = chat_manager.save_chat(history, model, prompt)
+            return result, update_chat_list()
+        
+        def load_selected_chat(selected):
+            if not selected:
+                return [], "No chat selected", None, None
+            chat_id = selected.split("(")[1].strip(")").strip()
+            chat_data = chat_manager.load_chat(f"chat_{chat_id}")
+            if chat_data:
+                return (
+                    chat_data["history"],
+                    f"Loaded chat from {chat_data['timestamp']}",
+                    chat_data["system_prompt"],
+                    chat_data["model"]
+                )
+            return [], "Error loading chat", None, None
+        
+        def delete_selected_chat(selected):
+            if not selected:
+                return "No chat selected", update_chat_list()
+            chat_id = selected.split("(")[1].strip(")").strip()
+            result = chat_manager.delete_chat(f"chat_{chat_id}")
+            return result, update_chat_list()
+        
+        # Connect chat history event handlers
+        save_chat.click(
+            fn=save_current_chat,
+            inputs=[chatbot, chat_model_selector, system_prompt],
+            outputs=[chat_info, chat_list]
+        )
+        
+        load_chat.click(
+            fn=load_selected_chat,
+            inputs=[chat_list],
+            outputs=[chatbot, chat_info, system_prompt, chat_model_selector]
+        )
+        
+        delete_chat.click(
+            fn=delete_selected_chat,
+            inputs=[chat_list],
+            outputs=[chat_info, chat_list]
+        )
+        
+        # Initialize chat list
+        chat_list.value = update_chat_list()
     
     return iface
 
