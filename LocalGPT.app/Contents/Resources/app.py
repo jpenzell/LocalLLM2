@@ -90,6 +90,23 @@ class ChatHistory:
         except Exception as e:
             logging.error(f"Error deleting chat {chat_id}: {e}")
             return f"Error deleting chat: {str(e)}"
+        
+    def rename_chat(self, chat_id: str, new_title: str) -> str:
+        """Rename a saved chat"""
+        filepath = os.path.join(HISTORY_DIR, f"{chat_id}.json")
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                chat_data = json.load(f)
+            
+            chat_data["title"] = new_title
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(chat_data, f, ensure_ascii=False, indent=2)
+            
+            return f"Chat renamed to: {new_title}"
+        except Exception as e:
+            logging.error(f"Error renaming chat {chat_id}: {e}")
+            return f"Error renaming chat: {str(e)}"
 
 # Initialize chat history manager
 chat_manager = ChatHistory()
@@ -469,7 +486,7 @@ def create_gradio_interface():
                         with gr.Row():
                             save_chat = gr.Button("💾 Save Chat")
                             load_chat = gr.Button("📂 Load Chat")
-                            delete_chat = gr.Button("🗑️ Delete Chat")
+                            delete_chat = gr.Button("🗑�� Delete Chat")
                         
                         chat_list = gr.Dropdown(
                             label="Saved Chats",
@@ -478,6 +495,14 @@ def create_gradio_interface():
                             interactive=True,
                             allow_custom_value=False
                         )
+                        
+                        with gr.Row():
+                            new_title = gr.Textbox(
+                                label="New Title",
+                                placeholder="Enter new title for chat",
+                                lines=1
+                            )
+                            rename_chat = gr.Button("✏️ Rename")
                         
                         chat_info = gr.Textbox(
                             label="Chat Info",
@@ -632,6 +657,13 @@ def create_gradio_interface():
             result = chat_manager.delete_chat(f"chat_{chat_id}")
             return result, update_chat_list()
         
+        def rename_selected_chat(selected, new_title):
+            if not selected or not new_title.strip():
+                return "Please select a chat and enter a new title", gr.update()
+            chat_id = selected.split("(")[1].strip(")").strip()
+            result = chat_manager.rename_chat(f"chat_{chat_id}", new_title.strip())
+            return result, update_chat_list()
+        
         # Connect chat history event handlers
         save_chat.click(
             fn=save_current_chat,
@@ -648,6 +680,12 @@ def create_gradio_interface():
         delete_chat.click(
             fn=delete_selected_chat,
             inputs=[chat_list],
+            outputs=[chat_info, chat_list]
+        )
+        
+        rename_chat.click(
+            fn=rename_selected_chat,
+            inputs=[chat_list, new_title],
             outputs=[chat_info, chat_list]
         )
         
