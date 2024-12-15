@@ -1,0 +1,10 @@
+gradio>=4.0.0
+requests>=2.31.0
+psutil>=5.9.0
+pydantic>=2.5.0
+rumps>=0.4.0
+create-dmg>=1.1.0
+python-dateutil>=2.8.2
+setproctitle>=1.3.3
+pyobjc-framework-Cocoa>=9.2
+PyQt6>=6.6.1
